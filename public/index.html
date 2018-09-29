@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Control Board</title>
+    <link href="vendor/css/bootstrap.min.css" rel="stylesheet">
+  </head>
+  <body>
+    <div class="container">
+      <h1>
+        Control Board
+        <button id="refresh" class="btn btn-success btn-xs"><span class="glyphicon glyphicon-refresh"></span></button>
+      </h1>
+      <h2>Git</h2>
+      <div id="git"></div>
+      <h2>Web Server</h2>
+      <div id="server"></div>
+      <h2>Mongo Database</h2>
+      <div id="mongo"></div>
+      <h2>Redis Database</h2>
+      <div id="redis"></div>
+      <h2>Postgres Database</h2>
+      <div id="postgres"></div>
+      
+      <div id="login" class="modal fade" tabindex="-1" role="dialog">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h4 class="modal-title">Login</h4>
+            </div>
+            <div id="login-body" class="modal-body">
+              <form>
+                <div class="form-group">
+                  <label for="recipient-name" class="control-label">email:</label>
+                  <input type="text" class="form-control" id="login-email">
+                </div>
+                <div class="form-group">
+                  <label for="message-text" class="control-label">password:</label>
+                  <input type="password" class="form-control" id="login-password">
+                </div>
+              </form>
+              <div id="login-alert" class="alert"></div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-primary" id="btn-login">Login</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="vendor/js/async.min.js"></script>
+    <script src="vendor/js/jquery.min.js"></script>
+    <script src="vendor/js/bootstrap.min.js"></script>
+    <script src="js/ajaxHelper.js"></script>
+    <script src="js/main.js"></script>
+  </body>
+</html>
