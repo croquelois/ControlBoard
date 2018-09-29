@@ -1,20 +1,32 @@
 "use strict";
-var child_process = require('child_process');
-var async = require('async');
-var http = require('http');
-var bunyan = require('bunyan');
-var log = bunyan.createLogger({name: 'routerControlBoard'});
-var mongodb = require('mongodb');
-var MongoClient = mongodb.MongoClient;
-var pg = require('pg');
-var redis = require('redis');
+const child_process = require('child_process');
+const async = require('async');
+const http = require('http');
+const bunyan = require('bunyan');
+const log = bunyan.createLogger({name: 'routerControlBoard'});
+const mongodb = require('mongodb');
+const MongoClient = mongodb.MongoClient;
+const pg = require('pg');
+const redis = require('redis');
+const items = require('./modules/items.js');
 
-var list = require("../config.js").list;
+const checkTypeMap = {
+  "git": checkGit, 
+  "server": checkServer, 
+  "mongo": checkMongo, 
+  "postgres": checkPostgres, 
+  "redis": checkRedis
+};
+
+const actionTypeMap = {
+  "git": pullGit,
+  "server": restartServer
+};
 
 // Git Repository
 
 function pullGit(info,cbFct){
-  var where = info.where;
+  let where = info.where;
   log.info("start pull git",where);
   child_process.exec("git pull", {cwd: where}, function(err, stdout){
     log.info("git pull done",where);
@@ -24,7 +36,7 @@ function pullGit(info,cbFct){
 }
 
 function checkGit(info,cbFct){
-  var where = info.where;
+  let where = info.where;
   log.info("start check git",where);
   child_process.exec("git remote update && git rev-list --count master..origin/master", {cwd: where}, function(err, stdout){
     log.info("git command done",where);
@@ -41,9 +53,9 @@ function checkGit(info,cbFct){
 // Web Server
 
 function checkServer(info,cbFct){
-  var where = info.where;
+  let where = info.where;
   log.info("start check web server",where);
-  var finish = function(err,res){
+  let finish = function(err,res){
     finish = null;
     log.info("check web server done",where);
     if(err) return cbFct(null, "down");
@@ -62,7 +74,7 @@ function checkServer(info,cbFct){
 }
 
 function restartServer(info,cbFct){
-  var cmd = info.restartCmd;
+  let cmd = info.restartCmd;
   log.info("start action restart server",cmd);
   child_process.exec(info.restartCmd, {}, function(err, stdout){
     log.info("restart server done",cmd,stdout);
@@ -74,7 +86,7 @@ function restartServer(info,cbFct){
 // Mongo Database
 
 function checkMongo(info,cbFct){
-  var where = info.where;
+  let where = info.where;
   log.info("start check mongo database",where);
   MongoClient.connect(where,function(err, db){
     log.info("check mongo database done",where);
@@ -83,7 +95,7 @@ function checkMongo(info,cbFct){
       return cbFct(null,"down");
     }
     if(db.s && db.s.topology && db.s.topology.s && db.s.topology.s.server && db.s.topology.s.server.s && db.s.topology.s.server.s.ismaster){
-      var rsInfo = db.s.topology.s.server.s.ismaster;
+      let rsInfo = db.s.topology.s.server.s.ismaster;
       if(!rsInfo.hosts) return cbFct(null,"online");
       if(rsInfo.ismaster) return cbFct(null,"primary");
       if(rsInfo.secondary) return cbFct(null,"secondary");
@@ -96,14 +108,14 @@ function checkMongo(info,cbFct){
 // Postgres Database
 
 function checkPostgres(info,cbFct){
-  var host = info.host;
-  var user = info.user;
-  var database = info.database;
-  var password = info.password;
-  var port = info.port || 5432;
+  let host = info.host;
+  let user = info.user;
+  let database = info.database;
+  let password = info.password;
+  let port = info.port || 5432;
   log.info("start check PostgreSQL database",host);
   
-  var client = new pg.Client({host:host,user:user,database:database,password:password,port:port});
+  let client = new pg.Client({host:host,user:user,database:database,password:password,port:port});
   client.connect(function (err) {
     if(err){
       log.error(host,err);
@@ -146,43 +158,50 @@ function checkRedis(info,cbFct){
 
 // ***
 
-function getStatus(fct,node,cbFct){
-  fct(node, function(err,res){
-    if(err) return cbFct(err);
-    node.status = res;
-    return cbFct(null,node);
-  });
-}
 
 function refresh(req,res){
-  var id = req.body['id'];
-  if(!list[id]) return res.status(400).send("id '"+id+"' doesn't exist");
-  var check = {"git":checkGit, "server":checkServer, "mongo": checkMongo, "postgres":checkPostgres, "redis":checkRedis}[list[id].type];
-  if(!check){
-    list[id].status = "unsupported";
-    return res.status(200).send(list[id]);
-  }
-  getStatus(check,list[id],function(err){
-    if(err) return res.status(500).send(err);
-    return res.status(200).send(list[id]);
+  let id = req.body['id'];
+  items.get(id, function(err, item){
+    if(err)
+      return res.status(err.code).send(err.msg);
+    let check = checkTypeMap[item.type];
+    if(!check)
+      check = (item,cb) => cb(null, "unsupported");
+    check(item, function(err, status){
+      if(err)
+        return res.status(500).send(err);
+      item.status = status;
+      items.pushStatus(id, status, function(err){
+        if(err)
+          return res.status(err.code).send(err.msg);
+        return res.status(200).send(item);
+      });
+    });
   });
 }
 
 function update(req,res){
-  var id = req.body['id'];
-  if(!list[id]) return res.status(400).send("id '"+id+"' doesn't exist");
-  var doUpdate = {"git":pullGit, "server":restartServer}[list[id].type];
-  if(!doUpdate) return res.status(500).send({error:"not supported"});
-  doUpdate(list[id],function(err, msg){
-    if(err) return res.status(500).send({error: err});
-    return res.status(200).send({msg: msg});
+  let id = req.body['id'];
+  items.get(id, function(err, item){
+    if(err)
+      return res.status(err.code).send(err.msg);
+    let action = actionTypeMap[item.type];
+    if(!action) 
+      return res.status(500).send("not supported");
+    action(item,function(err, msg){
+      if(err) 
+        return res.status(500).send(err);
+      return res.status(200).send(msg);
+    });
   });
 }
 
 function getList(req,res){
-  var arr = [];
-  for(var key in list) arr.push(list[key]);
-  return res.status(200).send(arr);
+  items.getAll((e,r) => res.status(e ? 500 : 200).send(e || r));
+}
+
+function upsert(req,res){
+  items.upsert(req.body['item'], e => res.status(e ? 500 : 200).send(e || "ok"));
 }
 
 module.exports = function(app){
@@ -205,4 +224,5 @@ module.exports = function(app){
   addPost("/getList",getList);
   addPost("/refresh",refresh);
   addPost("/update",update);
+  addPost("/upsert",upsert);
 };

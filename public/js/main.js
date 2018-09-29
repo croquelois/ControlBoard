@@ -58,7 +58,7 @@ $(function(){
     function refresh(cbFct){
       if(cbFct) queueFct(cbFct);
       if(!block("refreshing")) return;
-      ajaxRefresh(localStorage.token,elem.id,function(err,res){
+      ajaxRefresh(localStorage.token,elem._id,function(err,res){
         if(err){
           console.log(err);
           return unblock("error");
@@ -70,12 +70,12 @@ $(function(){
     btnRefresh.click(function(){ refresh(); });
     btnAction.click(function(){
       block("updating");
-      ajaxUpdate(localStorage.token,elem.id,function(err,res){
+      ajaxUpdate(localStorage.token,elem._id,function(err,res){
         if(err){
           console.log(err);
           return unblock("error");
         }
-        ajaxRefresh(localStorage.token,elem.id,function(err,res){
+        ajaxRefresh(localStorage.token,elem._id,function(err,res){
           if(err){
             console.log(err);
             return unblock("error");
