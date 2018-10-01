@@ -94,14 +94,18 @@ function checkMongo(info,cbFct){
       log.error(where,err);
       return cbFct(null,"down");
     }
-    if(db.s && db.s.topology && db.s.topology.s && db.s.topology.s.server && db.s.topology.s.server.s && db.s.topology.s.server.s.ismaster){
-      let rsInfo = db.s.topology.s.server.s.ismaster;
-      if(!rsInfo.hosts) return cbFct(null,"online");
-      if(rsInfo.ismaster) return cbFct(null,"primary");
-      if(rsInfo.secondary) return cbFct(null,"secondary");
-      return cbFct(null,"unexpected");
+    function closeAndCb(status){
+      db.close();
+      return cbFct(null,status);
     }
-    return cbFct(null,"online");
+    if(db.s && db.s.topology && db.s.topology.s && db.s.topology.s.server && db.s.topology.s.server && db.s.topology.s.server.ismaster){
+      let rsInfo = db.s.topology.s.server.ismaster;
+      if(!rsInfo.hosts) return closeAndCb("online");
+      if(rsInfo.ismaster) return closeAndCb("primary");
+      if(rsInfo.secondary) return closeAndCb("secondary");
+      return closeAndCb("unexpected");
+    }
+    return closeAndCb("online");
   });
 }
 
