@@ -7,7 +7,6 @@ var bunyan = require('bunyan');
 var log = bunyan.createLogger({name: 'modelUsers'});
 var utilities    = require('../../Utilities');
 var config    = require('../../config.js');
-var postageapp = require('postageapp')(config.postageappKey);
  
 var users;
 var contacts;
@@ -26,7 +25,6 @@ var getObjectId = dbSettings.getObjectId;
 
 var errorsList = {
   'user-invalid-token':             {code:400,codeTxt:'user-invalid-token',             msg:'the token is invalid'},
-  'user-invalid-verification-token':{code:400,codeTxt:'user-invalid-verification-token',msg:'the verification token is invalid'},
   'user-invalid-reset-token':       {code:400,codeTxt:'user-invalid-reset-token',       msg:'the reset token is invalid'},
   'user-email-not-found':           {code:400,codeTxt:'user-email-not-found',           msg:'cannot found a user with this email'},
   'user-email-taken':               {code:400,codeTxt:'user-email-taken',               msg:'email already taken'},
@@ -193,28 +191,11 @@ var processSubscribe = function(newData,opt,callback) {
       newData.date = moment().format('YYYY-MM-DD HH:mm:ss');
       newData.status = 'user';
       newData.gravatar = md5(newData.email);
-      if(opt.noVerif){
-        newData.verified = true;
-      }else{
-        newData.verified = false;
-        newData.verificationToken = generateSalt();
-      }
+      newData.verified = true;
       users.insertOne(cleanAccount(newData), function(err,data){
         if(err) return callback(err,data);
         if(data.ops.length === 0) return callback(err,null);
         var user = data.ops[0];
-        var options = { 
-          recipients: newData.email,
-          subject: 'Email verification',
-          from: config.rootMail,
-          template: 'email_verification',
-          variables: {
-              'token': newData.verificationToken,
-              'name': newData.name,
-              'url': config.url+"/userVerification?verifToken="+user._id+newData.verificationToken
-          }
-        };
-        if(!opt.noVerif) postageapp.sendMessage(options);
         contacts.updateOne({myEmail: newData.email}, {$set: {userId: user._id}},function(err,res){
           return callback(null, {_id:user._id, email: newData.email, gravatar: newData.gravatar, name: newData.name});
         });
@@ -225,33 +206,6 @@ var processSubscribe = function(newData,opt,callback) {
 
 exports.addNewAccount = function(newData, opt, callback){
   processSubscribe(newData, opt, callback);
-};
-
-exports.verificationUrl = function(verificationToken, callback){
-  var token = tokenExtract(verificationToken);
-  verificationToken = token.salt;
-  users.findOne({_id:getObjectId(token._id)}, function(e, o) {
-    if(!o) return callback(errorsList['user-not-found']);
-    if(o.verified) return callback(errorsList['user-already-verified']);
-    if(o.verificationToken != verificationToken) return callback(errorsList['user-invalid-verification-token']);
-    o.verified = true;
-    users.updateOne({_id:o._id}, {$set: {verified: true}},function(err,res){
-      return callback(err);
-    });
-  }); 
-};
-
-exports.verification = function(email, verificationToken, callback){
-  email = email.toLowerCase();
-  users.findOne({email:email}, function(e, o) {
-    if(!o) return callback(errorsList['user-not-found']);
-    if(o.verified) return callback(errorsList['user-already-verified']);
-    if(o.verificationToken != verificationToken) return callback(errorsList['user-invalid-verification-token']);
-    o.verified = true;
-    users.updateOne({email: email}, {$set: {verified: true}},function(err,res){
-      return callback(err);
-    });
-  }); 
 };
 
 exports.askResetPassword = function(email, callback){
