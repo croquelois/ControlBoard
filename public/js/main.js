@@ -2,8 +2,8 @@ $(function(){
   var listElem = [];
   var statusMapByType = {
     "git": {"up to date": "success", "behind": "danger", "error": "danger"},
-    "server": {"online": "success", "down": "danger"},
-    "mongo": {"online": "success", "primary": "success", "down": "danger", "secondary": "warning"},
+    "website": {"online": "success", "down": "danger"},
+    "mongodb": {"online": "success", "primary": "success", "down": "danger", "secondary": "warning"},
     "postgres": {"online": "success", "down": "danger"},
     "redis": {"online": "success", "down": "danger"},
   }
@@ -85,13 +85,13 @@ $(function(){
       });
     });
     list.append($("<li>").append(btnRefresh));
-    if(elem.type == "git"){
+    if(elem.actionType == "update"){
       iconAction.addClass("glyphicon-download");
       btnAction.tooltip({title: "pull the last version"});
       list.append($("<li>").append(btnAction));
-    }else if(elem.type == "server"){
+    }else if(elem.actionType == "restart"){
       iconAction.addClass("glyphicon-repeat");
-      btnAction.tooltip({title: "restart the web server"});
+      btnAction.tooltip({title: "restart the web site"});
       list.append($("<li>").append(btnAction));
     }
     $("#"+elem.type).append(main);
@@ -99,8 +99,8 @@ $(function(){
   
   function reset(){
     $("#git").empty();
-    $("#server").empty();
-    $("#mongo").empty();
+    $("#website").empty();
+    $("#mongodb").empty();
     $("#redis").empty();
     $("#postgres").empty();
     listElem = [];
