@@ -6,7 +6,6 @@ var assert = require('assert');
 var bunyan = require('bunyan');
 var log = bunyan.createLogger({name: 'modelUsers'});
 var utilities    = require('../../Utilities');
-var config    = require('../../config.js');
  
 var users;
 var contacts;
@@ -33,7 +32,8 @@ var errorsList = {
   'user-db-empty':                  {code:400,codeTxt:'user-db-empty',                  msg:'the database is empty'},
   'user-not-found':                 {code:400,codeTxt:'user-not-found',                 msg:'cannot found the user'},
   'user-already-verified':          {code:400,codeTxt:'user-already-verified',          msg:'the user has already been verified'},
-  'user-invalid-id':                {code:400,codeTxt:'user-invalid-id',                msg:'the id is not valid'}
+  'user-invalid-id':                {code:400,codeTxt:'user-invalid-id',                msg:'the id is not valid'},
+  'not-implemented':                {code:400,codeTxt:'not-implemented',                msg:'this function is not implemented'}
 };
 
 var cleanAccount = function(acc) {
@@ -209,26 +209,7 @@ exports.addNewAccount = function(newData, opt, callback){
 };
 
 exports.askResetPassword = function(email, callback){
-  email = email.toLowerCase();
-  users.findOne({email:email}, function(e, o) {
-    if(!o) return callback(errorsList['user-not-found']);
-    var salt = generateSalt();
-    users.updateOne({_id:o._id}, {$set: {resetPasswordToken:salt}}, function(err, res){
-      if(err) return callback(err);
-      var options = { 
-        recipients: o.email,
-        subject: 'Password reset',
-        from: config.rootMail,
-        template: 'password_reset',
-        variables: {
-            'name': o.name,
-            'url': config.url+"/userResetPassword?passToken="+o._id+salt
-        }
-      };
-      postageapp.sendMessage(options);
-      return callback();
-    });
-  }); 
+  return callback(errorsList['not-implemented']);
 };
 
 exports.resetPasswordTokenInfo = function(token, callback){

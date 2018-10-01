@@ -10,7 +10,7 @@ var config = require('./config');
 var app = express();
 
 // all environments
-app.set('port', process.env.PORT || 8082);
+app.set('port', config.port);
 app.set('view engine', 'jade');
 app.use(bodyParser.json());
 app.use(users.tokenUser);
