@@ -19,7 +19,7 @@ module.exports = function(info){
   ret.check = function(cbFct){
     let where = info.where;
     log.info("start check git",where);
-    child_process.exec("git remote update && git rev-list --count master..origin/master", {cwd: where}, function(err, stdout){
+    child_process.exec("git remote update >> /dev/null && git rev-list --count master..origin/master", {cwd: where}, function(err, stdout){
       log.info("git command done",where);
       if(err) return cbFct(err);
       try {
