@@ -1,3 +1,4 @@
+const child_process = require('child_process');
 const http = require('http');
 const bunyan = require('bunyan');
 const log = bunyan.createLogger({name: 'plugins-website'});
