@@ -70,7 +70,7 @@ $(function(){
     btnRefresh.click(function(){ refresh(); });
     btnAction.click(function(){
       block("updating");
-      ajaxUpdate(localStorage.token,elem._id,function(err,res){
+      ajaxAction(localStorage.token,elem._id,function(err,res){
         if(err){
           console.log(err);
           return unblock("error");
