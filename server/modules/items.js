@@ -1,71 +1,71 @@
+/* jshint undef: true, unused: true, sub:true, node:true, esversion:8 */
 "use strict";
-const async = require('async');
+
 const assert = require('assert');
+const {MongoClient, ObjectID} = require('mongodb');
 const bunyan = require('bunyan');
 const log = bunyan.createLogger({name: 'modelItems'});
  
-let items;
+let items = null;
 
 function now(){ return new Date(); }
-const dbSettings = require('./db-settings');
-dbSettings.get(function(err,db){
-  if(err) 
-    throw new Error("Unable to connect to the db: '"+ err + "'");
-  items = db.collection('items');
-});
-exports.waitDB = dbSettings.get;
-const getObjectId = dbSettings.getObjectId;
+
+function getObjectId(id){
+  if(!id.substr)
+    return id;
+  return new ObjectID(id);
+}
 
 let errorsList = {};
 function pushError(codeTxt, code, msg){ errorsList[codeTxt] = {code, codeTxt, msg}; }
 pushError('mongodb-problem', 500, 'problem with the database');
 pushError('item-not-found', 400, 'cannot found the item');
-pushError('item-invalid-id', 400, 'the id is not valid');
 
-exports.getAll = function(cb){
-  items.find({}).toArray(function(e,items){
-    if(e) 
-      return cb(errorsList['mongodb-problem']);
-    return cb(null,items);
-  });
-}
+class Items {
+  constructor(){
+    this.items = null;
+  }
+  
+  async init(config){
+    assert(config);
+    assert(config.dbUrl);
+    assert(config.dbName);
+    log.info(`open database: '${config.dbUrl}' '${config.dbName}'`); 
+    const client = new MongoClient(config.dbUrl, {useNewUrlParser: true, useUnifiedTopology: true});
+    await client.connect();
+    log.info('connected to the database');
+    const db = client.db(config.dbName);
+    this.items = db.collection('items');
+  }
+  
+  async getAll(){
+    return await this.items.find({}).toArray();
+  }
 
-exports.get = function(id, cb){
-  if(!id)
-    return cb(errorsList['item-invalid-id']);
-  items.findOne({_id:getObjectId(id)}, function(e,item){
-    if(e) 
-      return cb(errorsList['mongodb-problem']);
+  async get(id){
+    let item = await this.items.findOne({_id:getObjectId(id)});
     if(!item)
-      return cb(errorsList['item-not-found']);
-    return cb(null,item);
-  });
-}
+      throw errorsList['item-not-found'];
+    return item;
+  }
 
-exports.pushStatus = function(id, status, cb){
-  if(!id)
-    return cb(errorsList['item-invalid-id']);
-  items.updateOne({_id:getObjectId(id)}, {$set: {status, lastUpdate:now()}}, e => cb(e && errorsList['mongodb-problem']));
-}
+  async pushStatus(id, status){
+    await this.items.updateOne({_id:getObjectId(id)}, {$set: {status, lastUpdate:now()}});
+  }
 
-exports.upsert = function(item, cb){
-  item.status = item.status || "unknown";
-  if(item._id){
-    items.update({_id:getObjectId(item._id)},item, function(err,res){
-      if(err) return cb(err);
-      return cb(err,res.ops[0]);
-    });
-    
-  }else{
-    items.insertOne(item, function(err,res){
-      if(err) return cb(err);
-      return cb(err,res.ops[0]);
-    });
+  async upsert(item){
+    item.status = item.status || "unknown";
+    let res = null;
+    if(item._id)
+      res = await this.items.update({_id:getObjectId(item._id)}, item);
+    else
+      res = await this.items.insertOne(item);
+    return res.ops[0];
+  }
+
+  async reset(){
+    return (await this.items.deleteMany({})).deletedCount;
   }
 }
 
-exports.reset = function(cb){
-  items.deleteMany({},function(err,res){
-    return cb(err,res && res.deletedCount);
-  });
-}
+module.exports = Items;

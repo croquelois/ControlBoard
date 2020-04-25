@@ -1,37 +1,38 @@
-var express = require('express');
-var bodyParser = require('body-parser');
-var http = require('http');
-var path = require('path');
-var bunyan = require('bunyan');
-var log = bunyan.createLogger({name: 'routerAdmin'});
-var users = require('./server/modules/users');
-var config = require('./config');
+/* jshint undef: true, unused: true, sub:true, node:true, esversion:8 */
+"use strict";
 
-var app = express();
+const express = require('express');
+const bodyParser = require('body-parser');
+const http = require('http');
+const path = require('path');
+const bunyan = require('bunyan'); // node.exe app.js | ./node_modules/.bin/bunyan --color
+const log = bunyan.createLogger({name: 'routerAdmin'});
+const Users = require('./server/modules/users');
+const utils = require('./utils.js');
+const configFile = process.argv[2] || "config.js";
+const config = require('./' + configFile);
 
-// all environments
-app.set('port', config.port);
-app.set('view engine', 'jade');
-app.use(bodyParser.json());
-app.use(users.tokenUser);
-app.use(express.static(path.join(__dirname, 'public')));
-
-require('./server/router')(app);
-
-http.createServer(app).listen(app.get('port'), function(){
-  log.info('Express server listening on port ' + app.get('port'));
-});
-
-function infiniteLoop(what,fct,timer){
-  log.info(what,"Start");
-  function inner(){
-    log.info(what,"refresh");
-    fct(function(err,res){
-      if(err) console.log(what, err);
-      setTimeout(inner,timer); 
-    });
-  }
-  inner();
+async function main(){
+  let app = express();
+  let users = new Users();
+  await users.init(config);
+  app.use(bodyParser.json());
+  app.use(users.tokenUser.bind(users));
+  app.use(express.static(path.join(__dirname, 'public')));
+  await require('./server/router')(app, config);
+  const server = http.createServer(app);
+  server.listen(config.port, () => log.info(`Express server listening on port ${config.port}`));
+  server.on('error', error => {
+    if (error.code === 'EADDRINUSE') {
+      log.error(`port ${config.port} is already in use`);
+    } else {
+      log.error({error}, "Error sent by the server instance");
+    }
+    process.exit(-1);
+  });
+  utils.infiniteLoop("Token cleanup", users.checkExpiredTokens.bind(users), 10*60*1000);
 }
 
-infiniteLoop("Token cleanup", users.checkExpiredTokens.bind(users), 10*60*1000);
+process.on('unhandledRejection', e => { throw e; });
+main();
+

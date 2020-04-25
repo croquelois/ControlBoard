@@ -1,9 +1,17 @@
+/* jshint undef: true, unused: true, sub:true, node:true, esversion:8 */
 "use strict";
-const child_process = require('child_process');
-const async = require('async');
+
+const Items = require('./modules/items.js');
 const bunyan = require('bunyan');
+const util = require('./util.js');
+
 const log = bunyan.createLogger({name: 'routerControlBoard'});
-const items = require('./modules/items.js');
+
+let errorsList = {};
+function pushError(codeTxt, code, msg){ errorsList[codeTxt] = {code, codeTxt, msg}; }
+pushError('not-supported', 400, 'the request is not supported');
+pushError('item-invalid-id', 400, 'the id is not valid');
+pushError('item-invalid-action-type', 400, 'invalid action');
 
 const plugins = {
   "git": require('./plugins/git.js'),
@@ -13,78 +21,65 @@ const plugins = {
   "redis": require('./plugins/redis.js')
 };
 
-function refresh(req,res){
-  let id = req.body['id'];
-  items.get(id, function(err, item){
-    if(err)
-      return res.status(err.code).send(err.msg);
+module.exports = async function(app, config){
+  let items = new Items();
+  await items.init(config);
+  
+  async function refresh(req){
+    let id = req.body['id'];
+    if(!id)
+      throw errorsList['item-invalid-id'];
+    let item = await items.get(id);
     let plugin = plugins[item.type];
-    let check = (plugin && plugin(item).check) || (cb => cb(null, "unsupported"));
-    check(function(err, status){
-      if(err)
-        return res.status(500).send(err);
-      item.status = status;
-      items.pushStatus(id, status, function(err){
-        if(err)
-          return res.status(err.code).send(err.msg);
-        return res.status(200).send(item);
-      });
-    });
-  });
-}
+    let check = (plugin && plugin(item).check);
+    if(!check) 
+      throw errorsList['not-supported'];
+    item.status = await check();
+    await items.pushStatus(id, item.status);
+    return item;
+  }
 
-function action(req,res){
-  let id = req.body['id'];
-  items.get(id, function(err, item){
-    if(err)
-      return res.status(err.code).send(err.msg);
+  async function action(req){
+    let id = req.body['id'];
+    if(!id)
+      throw errorsList['item-invalid-id'];
+    let type = req.body['type'];
+    if(!type)
+      throw errorsList['item-invalid-action-type'];
+    let item = await items.get(id);
+    log.info(`Action ${type} on ${item.name}`);
     let plugin = plugins[item.type];
-    let action = (plugin && plugin(item).action);
-    if(!action) 
-      return res.status(500).send("not supported");
-    action(function(err, msg){
-      if(err) 
-        return res.status(500).send(err);
-      return res.status(200).send(msg);
-    });
-  });
-}
-
-function toClient(item){
-  return {
-      _id: item._id,
-      type: item.type,
-      name: item.name,
-      status: item.status,
-      actionType: (plugins[item.type] && plugins[item.type](item).actionType)
+    if(!plugin)
+      throw new Error("unrecognized item type in the database: " + item.type);
+    const actions = plugins[item.type](item).actions || {};
+    if(!actions[type]) 
+      throw errorsList['item-invalid-action-type'];
+    return actions[type]();
   }
-}
 
-function getList(req,res){
-  items.getAll((e,r) => res.status(e ? 500 : 200).send(e || r.map(toClient)));
-}
-
-function upsert(req,res){
-  items.upsert(req.body['item'], e => res.status(e ? 500 : 200).send(e || "ok"));
-}
-
-module.exports = function(app){
-  function addPost(url,fct){
-    app.post(url, function(req,res){
-      log.info(url);
-      if(!req.user){
-        log.info("invalid token");
-        return res.status(401).send('invalid token');
-      }
-      try{ 
-        fct(req,res);
-      }catch(err){ 
-        log.error(err.stack?err.stack:err,"try/catch"); 
-        res.status(500).send(err.stack?err.stack:err); 
-      }
-    });
+  function toClient(item){
+    let plugin = plugins[item.type];
+    if(!plugin)
+      throw new Error("unrecognized item type in the database: " + item.type);
+    return {
+        _id: item._id,
+        type: item.type,
+        name: item.name,
+        status: item.status,
+        actions: Object.keys(plugins[item.type](item).actions || {})
+    };
   }
-    
+
+  async function getList(/*req*/){
+    return (await items.getAll()).map(toClient);
+  }
+
+  async function upsert(req){
+    return items.upsert(req.body['item']);
+  }
+
+  const addPost = (url,fct,opt) => util.addPost(app, log, url, fct, opt);
+
   addPost("/getList",getList);
   addPost("/refresh",refresh);
   addPost("/action",action);

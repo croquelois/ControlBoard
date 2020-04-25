@@ -1,398 +1,198 @@
+/* jshint undef: true, unused: true, sub:true, node:true, esversion:8 */
 "use strict";
-var crypto = require('crypto');
-var moment = require('moment');
-var async = require('async');
-var assert = require('assert');
-var bunyan = require('bunyan');
-var log = bunyan.createLogger({name: 'modelUsers'});
-var utilities    = require('../../Utilities');
- 
-var users;
-var contacts;
-var tokens;
+
+const crypto = require('crypto');
+const moment = require('moment');
+const assert = require('assert');
+const {MongoClient, ObjectID} = require('mongodb');
+const bunyan = require('bunyan');
+const log = bunyan.createLogger({name: 'modelUsers'});
+
+let errorsList = {};
+function pushError(codeTxt, code, msg){ errorsList[codeTxt] = {code, codeTxt, msg}; }
+pushError('user-invalid-token', 400, 'the token is invalid');
+pushError('user-email-not-found', 400, 'cannot found a user with this email');
+pushError('user-email-taken', 400, 'email already taken');
+pushError('user-email-incorrect', 400, 'the format of the email is incorrect');
+pushError('user-invalid-password', 400, 'the password is incorrect');
+pushError('user-database-error', 400, 'error in the database');
+
+/* helpers */
 
 function now(){ return new Date(); }
-var dbSettings = require('./db-settings');
-dbSettings.get(function(err,db){
-  if(err) throw new Error("Unable to connect to the db: '"+ err + "'");
-  users = db.collection('users');
-  contacts = db.collection('contacts');
-  tokens = db.collection('tokens');
-});
-exports.waitDB = dbSettings.get;
-var getObjectId = dbSettings.getObjectId;
 
-var errorsList = {
-  'user-invalid-token':             {code:400,codeTxt:'user-invalid-token',             msg:'the token is invalid'},
-  'user-invalid-reset-token':       {code:400,codeTxt:'user-invalid-reset-token',       msg:'the reset token is invalid'},
-  'user-email-not-found':           {code:400,codeTxt:'user-email-not-found',           msg:'cannot found a user with this email'},
-  'user-email-taken':               {code:400,codeTxt:'user-email-taken',               msg:'email already taken'},
-  'user-email-incorrect':           {code:400,codeTxt:'user-email-incorrect',           msg:'the format of the email is incorrect'},
-  'user-invalid-password':          {code:400,codeTxt:'user-invalid-password',          msg:'the password is incorrect'},
-  'user-db-empty':                  {code:400,codeTxt:'user-db-empty',                  msg:'the database is empty'},
-  'user-not-found':                 {code:400,codeTxt:'user-not-found',                 msg:'cannot found the user'},
-  'user-already-verified':          {code:400,codeTxt:'user-already-verified',          msg:'the user has already been verified'},
-  'user-invalid-id':                {code:400,codeTxt:'user-invalid-id',                msg:'the id is not valid'},
-  'not-implemented':                {code:400,codeTxt:'not-implemented',                msg:'this function is not implemented'}
-};
-
-var cleanAccount = function(acc) {
-  if(acc.name) acc.name = utilities.removeHtml(acc.name);
-  if(acc.email) acc.email = utilities.removeHtml(acc.email);    
-  return acc;
-};
-
-function logCb(cb){
-  return function(err,res){
-    console.log(err,res);
-    cb(err,res);
-  };
+function getObjectId(id){
+  if(!id.substr)
+    return id;
+  return new ObjectID(id);
 }
 
-exports.tokenUser = function(req,res,next){
-  var token = req.body['token'];
-  if(!token) token = req.query['token'];
-  if(!token) return next();
-  exports.getUserFromToken(token,function(e,user){
-    if(e) return res.send(500,'db problem');
-    if(!user) return res.send(401,'invalid-token');
-    req.user = user;
-    next();
-  });
-};
-  
-var tokenExtract = function(str){
+const emailRegex = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+function checkEmail(email) {
+  return emailRegex.test(email);
+}
+
+const htmlTagRegex = /<\/?([a-z][a-z0-9]*)\b[^>]*>?/gi;
+function removeHtml(html){
+  if(!html.replace)
+    return html;
+  return html.replace(htmlTagRegex, '');
+}
+
+function cleanAccount(acc) {
+  if(acc.name) 
+    acc.name = removeHtml(acc.name);
+  if(acc.email) 
+    acc.email = removeHtml(acc.email);    
+  return acc;
+}
+
+function tokenExtract(str){
   assert(str);
-  var len = str.length;
+  const len = str.length;
   assert(len > 10);
   return {_id:getObjectId(str.substr(0,len-10)),salt:str.substr(len-10,10)};
-};
-
-exports.getToken = function(email, pass, callback){
-  assert(email); assert(pass); assert(typeof callback == 'function');
-  email = email.toLowerCase();
-  users.findOne({email:email}, function(e, user) {
-    if(e) return callback(e);
-    if(!user) return callback(errorsList['user-email-not-found']);
-    validatePassword(pass, user.pass, function(err, res) {
-      if(!res) return callback(errorsList['user-invalid-password']);
-      var salt = generateSalt();
-      tokens.insertOne({user:user._id,salt:salt,expirationTime:moment.utc().add(1,"days").toDate()}, {safe: true}, function(err,res){
-        if(err) callback(err);
-        else callback(null,{token:""+res.ops[0]._id+salt,userId:user._id,status:user.status,name:user.name,gravatar:user.gravatar});
-      });
-    });
-  });
-};
-
-exports.destroyToken = function(id, callback){
-  if(id.length < 10) return callback(errorsList["user-invalid-token"]);
-  tokens.deleteOne(tokenExtract(id), function(err, res) {
-    return callback(err,res && (res.matchedCount == 1));
-  });
-};
-
-exports.getUserFromToken = function(id, callback){
-  try{
-    tokens.findOne(tokenExtract(id), function(e, token) {
-      if(e) return callback(e);
-      if(!token) return callback(errorsList["user-invalid-token"]);
-      users.findOne({_id: token.user}, function(e, user) {
-        if(e) return callback(e);
-        callback(null,user);
-      });
-    });  
-  }catch(err){ return callback(err); }
-};
-
-exports.get = function(opt,callback){
-  if(!callback){ 
-    callback = opt; 
-    opt = {};
-  }
-  var q = {};
-  if(opt.adminOnly){
-   q.status = {$in: ["Admin","Developer"]};
-  }
-  users.find(q).toArray(function(e,users){
-    if(e) return callback(e);
-    if(!users) return callback(null,[]);
-    var okField = {email:true,name:true,_id:true,date:true,status:true,verified:true,gravatar:true,currency:true};
-    callback(null, users.map(function(u){ 
-      var u2 = {};
-      for(var k in u)
-        if(okField[k])
-          u2[k] = u[k];
-      return u2; 
-    }));
-  });
-};
-
-exports.getUserFromId = function(id, callback){
-  if(id.map){ // then it's an array
-    var ids = id.map(getObjectId);
-    var userMap = {};
-    users.find({_id: { $in: ids}}).toArray(function(e,users){
-      if(e) return callback(e);
-      if(!users) users = [];
-      users.forEach(function(user){ 
-        delete user.pass;
-        userMap[user._id] = user; 
-      });  // Fill the user map
-      callback(null, ids.map(function(id){ return userMap[id]; })); // reorder the users 
-    });
-  }else{ // else it's an id
-    findById(id, function(e, user) {
-      if(e) return callback(e);
-      if(!user) return callback(errorsList['user-not-found']);
-      delete user.pass;
-      callback(null,user);
-    });
-  }
-};
-  
-exports.getUserFromEmail = function(email, callback){
-  email = email.toLowerCase();  
-  users.findOne({email:email}, function(e, user){ 
-    if(e) return callback(e);
-    if(!user) return callback(errorsList['user-email-not-found']);
-    callback(null,user); 
-  });
-};
-
-exports.getUserIdFromEMail = function(email, callback){
-  email = email.toLowerCase();
-  exports.getUserFromEmail(email, function(e, user) {
-    if(e) return callback(e);
-    callback(null,user._id);
-  });
-};
-
-exports.createRandomAccount = function(cb){
-  users.insertOne({name:generateSalt(),email:(generateSalt()+"@"+generateSalt()+".com").toLowerCase(),verified:true,isTest:true}, function(err,res){
-    if(err) return cb(err);
-    return cb(err,res.ops[0]);
-  });
-};
-
-var processSubscribe = function(newData,opt,callback) {
-  if(!callback){
-    callback = opt;
-    opt = {};
-  }
-  newData.email = newData.email.toLowerCase();
-
-  users.findOne({email:newData.email}, function(e, o) {
-    if(o) return callback(errorsList['user-email-taken']);
-    if(!utilities.checkEmail(newData.email)) return callback(errorsList['user-email-incorrect']);
-    
-    saltAndHash(newData.pass, function(hash){
-      newData.pass = hash;
-      newData.date = moment().format('YYYY-MM-DD HH:mm:ss');
-      newData.status = 'user';
-      newData.gravatar = md5(newData.email);
-      newData.verified = true;
-      users.insertOne(cleanAccount(newData), function(err,data){
-        if(err) return callback(err,data);
-        if(data.ops.length === 0) return callback(err,null);
-        var user = data.ops[0];
-        contacts.updateOne({myEmail: newData.email}, {$set: {userId: user._id}},function(err,res){
-          return callback(null, {_id:user._id, email: newData.email, gravatar: newData.gravatar, name: newData.name});
-        });
-      });
-    });
-  }); 
-};
-
-exports.addNewAccount = function(newData, opt, callback){
-  processSubscribe(newData, opt, callback);
-};
-
-exports.askResetPassword = function(email, callback){
-  return callback(errorsList['not-implemented']);
-};
-
-exports.resetPasswordTokenInfo = function(token, callback){
-  token = tokenExtract(token);
-  var salt = token.salt;
-  var id = getObjectId(token._id);
-  users.findOne({_id:id}, function(e, o) {
-    if(e) return callback(e);
-    if(!o) return callback(errorsList['user-not-found']);
-    if(o.resetPasswordToken != salt) return callback(errorsList['user-invalid-reset-token']);
-    return callback(null,o);
-  }); 
-};
-
-exports.resetPassword = function(token, newPass, callback){
-  token = tokenExtract(token);
-  var salt = token.salt;
-  var id = getObjectId(token._id);
-  users.findOne({_id:id}, function(e, o) {
-    if(e) return callback(e);
-    if(!o) return callback(errorsList['user-not-found']);
-    if(o.resetPasswordToken != salt) return callback(errorsList['user-invalid-reset-token']);
-    saltAndHash(newPass, function(hash){
-      users.updateOne({_id: o._id}, {$set: {pass: hash}, $unset: {resetPasswordToken: true}}, function(e,o){
-        return callback(e);
-      });
-    });
-  }); 
-};
-
-exports.updateAccount = function(newData, callback){
-  var set = {};
-  if(newData.name){ set.name = newData.name; }
-  if(newData.email){
-    set.email = newData.email.toLowerCase();
-    set.gravatar = md5(newData.email);
-  }
-  if(!newData.pass){
-    users.updateOne({_id:getObjectId(newData.userId)}, {$set: set}, function(err,res){
-      return callback(err,res && (res.matchedCount == 1));
-    });
-  }else{
-    saltAndHash(newData.pass, function(hash){
-      set.pass = hash;
-      users.updateOne({_id:getObjectId(newData.userId)}, {$set: set},function(err,res){
-        return callback(err,res && (res.matchedCount == 1));
-      });
-    });
-  }
-};
-
-exports.updatePassword = function(email, newPass, callback){
-  saltAndHash(newPass, function(hash){
-    users.updateOne({email:email}, {$set: {pass: hash}}, callback);
-  });
-};
-
-exports.deleteAccount = function(id, callback){
-  assert(id);
-  users.removeOne({_id: getObjectId(id)}, callback);
-};
-
-exports.massDelete = function(ids,cb){
-  assert(ids);
-  assert(ids.map);
-  ids = ids.map(getObjectId);
-  users.deleteMany({_id: {$in: ids}},function(err,res){
-    return cb(err,res && (res.deletedCount == ids.length));
-  });
-};
-
-exports.getUsersById = function(ids,callback){
-  users.find({_id: {$in: ids}}).toArray(callback);
-};
-
-exports.updatePublicInfo = function(id, info, callback){
-  users.updateOne({_id: getObjectId(id)},{$set: {publicInfo: info}},function(err,res){
-    return callback(err,res && (res.matchedCount == 1));
-  });
-};
-
-exports.getCurrency = function(id, callback){
-  findById(id,function(e,user){
-    if(e) return callback(e,user);
-    if(!user) return callback(errorsList['user-not-found']);
-    return callback(e,user.currency);
-  });
-};
-
-exports.getPublicInfo = function(id, callback){
-  findById(id,function(e,user){
-    if(e) return callback(e,user);
-    if(!user) return callback(errorsList['user-not-found']);
-    return callback(e,user.publicInfo);
-  });
-};
-
-exports.updateCurrency = function(id, currency, callback){
-  users.updateOne({_id: getObjectId(id)},{$set: {currency: currency}},function(err,res){
-    return callback(err,res && (res.matchedCount == 1));
-  });
-};
-
-exports.updatePrivateInfo = function(id, info, callback){
-  users.updateOne({_id: getObjectId(id)},{$set: {privateInfo: info}},function(err,res){
-    return callback(err,res && (res.matchedCount == 1));
-  });
-};
-
-exports.getPrivateInfo = function(id, callback){
-  findById(id,function(e,user){
-    if(e) return callback(e);
-    if(!user) return callback(errorsList['user-not-found']);
-    return callback(null,user.privateInfo||{});
-  });
-};
-
-exports.getHash = function(id, callback){
-  findById(id,function(e,o){
-    if(e || !o) return callback(e,o);
-    return callback(e,o.gravatar);
-  });
-};
+}
 
 /* private encryption & validation methods */
 
-var generateSalt = function(){
-  var set = '0123456789abcdefghijklmnopqurstuvwxyzABCDEFGHIJKLMNOPQURSTUVWXYZ';
-  var salt = '';
-  for (var i = 0; i < 10; i++) {
-  var p = Math.floor(Math.random() * set.length);
-  salt += set[p];
-  }
+function generateSalt(){
+  const set = '0123456789abcdefghijklmnopqurstuvwxyzABCDEFGHIJKLMNOPQURSTUVWXYZ';
+  let salt = '';
+  for(let i = 0; i < 10; i++)
+    salt += set[Math.floor(Math.random() * set.length)];
   return salt;
-};
+}
 
-var md5 = function(str) {
+function md5(str) {
   return crypto.createHash('md5').update(str).digest('hex');
-};
+}
 
-var saltAndHash = function(pass, callback){
-  var salt = generateSalt();
-  callback(salt + md5(pass + salt));
-};
+function saltAndHash(pass){
+  const salt = generateSalt();
+  return salt + md5(pass + salt);
+}
 
-var validatePassword = function(plainPass, hashedPass, callback){
-  var salt = hashedPass.substr(0, 10);
-  var validHash = salt + md5(plainPass + salt);
-  callback(null, hashedPass === validHash);
-};
+function isPasswordCorrect(plainPass, hashedPass){
+  const salt = hashedPass.substr(0, 10);
+  const validHash = salt + md5(plainPass + salt);
+  return (hashedPass === validHash);
+}
 
-/* auxiliary methods */
+/* Users class */
 
-var findById = function(id, callback){
-  try {
-    users.findOne({_id: getObjectId(id)},
-    function(e, res) {
-      if (e) callback(e);
-      else callback(null, res);
-    });
-  }catch(err){
-    callback(errorsList['user-invalid-id']);
-  }    
-};
+class Users {
+  constructor(){
+    this.users = null;
+    this.tokens = null;
+  }
 
-exports.setUserStatus = function(userId,status,callback){
-  assert(userId);
-  assert(typeof status == 'string');
-  assert(typeof callback == 'function');
-  users.updateOne({_id : getObjectId(userId)}, {$set: {status: status}}, function(err,res){
-    if(!res.matchedCount) return callback(errorsList['user-not-found']);
-    return callback(err);
-  });
-};  
+  async init(config){
+    assert(config);
+    assert(config.dbUrl);
+    assert(config.dbName);
+    log.info(`open database: '${config.dbUrl}' '${config.dbName}'`); 
+    const client = new MongoClient(config.dbUrl, {useNewUrlParser: true, useUnifiedTopology: true});
+    await client.connect();
+    log.info('connected to the database');
+    const db = client.db(config.dbName);
+    this.users = db.collection('users');
+    this.tokens = db.collection('tokens');
+  }
 
-exports.delAllRecords = function(callback){
-  assert(typeof callback == 'function');
-  users.deleteMany({}, function(){
-    tokens.deleteMany({}, callback);
-  });  
-};
+  tokenUser(req, res, next){
+    let ip = req.ip;
+    let token = req.body['token'];
+    if(!token)
+      token = req.query['token'];
+    if(!token)
+      return next();
+    if(!token.substr || token.length <= 10){
+      log.warn({ip, token}, "token rejected, too short");
+      return res.status(401).send(errorsList['user-invalid-token']);
+    }
+    this.getUserFromToken(token).then(user => {
+      if(!user){
+        log.warn({ip, token}, "token rejected, not link with a user");
+        return res.status(401).send(errorsList['user-invalid-token']);
+      }
+      delete user.pass;
+      req.user = user;
+      next();
+    }).catch(err => res.status(err.code || 500).send(err));
+  }
+  
+  async getUserFromToken(id){
+    const token = await this.tokens.findOne(tokenExtract(id));
+    if(!token) 
+      return null;
+    return await this.users.findOne({_id: token.user});
+  }
 
-exports.checkExpiredTokens = function(cb){
-  if(!tokens) return cb(); // db not ready
-  tokens.deleteMany({expirationTime: {$lt: now()}},cb);
-};
+  async getUserFromEmail(email){
+    email = email.toLowerCase();  
+    const user = await this.users.findOne({email});
+    if(!user) 
+      throw errorsList['user-email-not-found'];
+    return user;
+  }
+
+  async getToken(email, pass){
+    assert(email); 
+    assert(pass); 
+    email = email.toLowerCase();
+    const user = await this.users.findOne({email});
+    if(!user) 
+      throw errorsList['user-email-not-found'];
+    if(!isPasswordCorrect(pass, user.pass))
+      throw errorsList['user-invalid-password'];
+    
+    const salt = generateSalt();
+    const expirationTime = moment.utc().add(1,"days").toDate();
+    const res = await this.tokens.insertOne({user:user._id,salt,expirationTime}, {safe: true});
+    const token = ""+res.ops[0]._id+salt;
+    return {token, userId:user._id, status:user.status, name:user.name, gravatar:user.gravatar};
+  }
+  
+  async destroyToken(id){
+    if(id.length < 10) 
+      throw errorsList["user-invalid-token"];
+    let res = await this.tokens.deleteOne(tokenExtract(id));
+    return (res.matchedCount == 1);
+  }
+  
+  async addNewAccount(newData){
+    newData.email = newData.email.toLowerCase();
+    newData.pass = saltAndHash(newData.pass);
+    newData.date = moment().format('YYYY-MM-DD HH:mm:ss');
+    newData.status = 'user';
+    newData.gravatar = md5(newData.email);
+    newData.verified = true;
+    cleanAccount(newData);
+    
+    const email = newData.email;
+    if(!checkEmail(email)) 
+      throw errorsList['user-email-incorrect'];
+    
+    const existingUser = await this.users.findOne({email});
+    if(existingUser)
+      throw errorsList['user-email-taken'];
+    
+    const data = await this.users.insertOne(newData);
+    if(!data || !data.ops || !data.ops.length) 
+      throw new Error("Database error: Unable to insert the new account");
+    
+    const user = data.ops[0];
+    return {_id:user._id, email: newData.email, gravatar: newData.gravatar, name: newData.name};
+  }
+
+  async deleteAccount(id){
+    await this.users.removeOne({_id: getObjectId(id)});
+  }
+
+  async checkExpiredTokens(){
+    await this.tokens.deleteMany({expirationTime: {$lt: now()}});
+  }
+}
+
+module.exports = Users;

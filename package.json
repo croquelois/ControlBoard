@@ -1,26 +1,16 @@
 {
-  "name": "jarz",
-  "version": "0.0.1",
-  "private": true,
+  "name": "ControlBoard",
+  "version": "1.0.0",
   "scripts": {
     "start": "node app.js"
   },
   "dependencies": {
-    "async": "^1.4.2",
-    "body-parser": "^1.14.1",
+    "body-parser": "^1.19.0",
     "bunyan": "^1.5.1",
-    "connect-multiparty": "^2.0.0",
-    "express": "^4.13.3",
-    "jade": "^1.11.0",
-    "less": "^2.5.3",
-    "less-middleware": "^2.0.1",
-    "moment": "^2.10.6",
-    "mongodb": "^2.0.45",
-    "nib": "^1.1.0",
+    "express": "^4.17.1",
+    "moment": "^2.24.0",
+    "mongodb": "^3.5.5",
     "pg": "^6.1.0",
-    "redis": "^2.6.2",
-    "request": "~2.58.0",
-    "rimraf": "^2.4.4",
-    "stylus": "^0.52.4"
+    "redis": "^2.6.2"
   }
 }
