@@ -11,6 +11,7 @@ const statusMapByType = {
   "mongodb": {"standalone": "success", "primary": "success", "down": "danger", "secondary": "warning", "unknown": "danger", "arbiter": "info", "proxy": "info"},
   "postgres": {"online": "success", "down": "danger"},
   "redis": {"online": "success", "down": "danger"},
+  "server": {"online": "success", "down": "danger"},
 };
 
 class Card {
@@ -58,7 +59,7 @@ class Card {
     const btn = $("<button>").addClass("btn btn-danger btn-xs").append(iconAction);
     if(actionType == "update"){
       iconAction.addClass("oi-data-transfer-download");
-      btn.tooltip({title: "pull the last version"});
+      btn.tooltip({title: "update to the last version"});
     }else if(actionType == "restart"){
       iconAction.addClass("oi-reload");
       btn.tooltip({title: "restart the server"});

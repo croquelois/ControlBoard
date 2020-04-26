@@ -14,27 +14,22 @@ module.exports = function(info){
   ret.actions.update = function(){
     return new Promise(function(res,rej){
       let where = info.where;
-      log.info("start pull git",where);
-      try {
-        child_process.exec("git pull", {cwd: where}, function(error){
-          if(error){
-            log.error({where, error}, "git pull error");
-            return rej(error);
-          }
-          log.info("git pull done",where);
-          return res("done");  
-        });
-      }catch(error){
-        log.error({where, error}, "git pull error");
-        return rej(error);
-      }
+      log.info(`start pull git: ${where}`);
+      child_process.exec("git pull", {cwd: where}, function(error){
+        if(error){
+          log.error({where, error}, "git pull error");
+          return rej(error);
+        }
+        log.info("git pull done",where);
+        return res("done");  
+      });
     });
   };
 
   ret.check = function(){
     return new Promise(function(res,rej){
       let where = info.where;
-      log.info("start check git",where);
+      log.info(`start check git: ${where}`);
       let cmd = "git remote update >> /dev/null && git rev-list --count master..origin/master";
       child_process.exec(cmd, {cwd: where}, function(error, stdout){
         log.info("git command done",where);

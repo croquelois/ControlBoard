@@ -18,7 +18,8 @@ const plugins = {
   "website": require('./plugins/website.js'),
   "mongodb": require('./plugins/mongodb.js'),
   "postgres": require('./plugins/postgres.js'),
-  "redis": require('./plugins/redis.js')
+  "redis": require('./plugins/redis.js'),
+  "server": require('./plugins/server.js'),
 };
 
 module.exports = async function(app, config){
